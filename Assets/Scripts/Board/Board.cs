@@ -25,23 +25,25 @@ public class Board
 
     private int m_matchMin;
 
-    public Board(Transform transform, GameSettings gameSettings)
+	public Board(Transform transform, GameSettings gameSettings)
+	{
+		m_root = transform;
+
+		m_matchMin = gameSettings.MatchesMin;
+
+		
+		this.boardSizeX = gameSettings.BoardSizeX;
+		this.boardSizeY = gameSettings.BoardSizeY;
+
+		m_cells = new Cell[boardSizeX, boardSizeY];
+		CreateBoard();
+	}
+
+
+	private void CreateBoard()
     {
-        m_root = transform;
-
-        m_matchMin = gameSettings.MatchesMin;
-
-        this.boardSizeX = gameSettings.BoardSizeX;
-        this.boardSizeY = gameSettings.BoardSizeY;
-
-        m_cells = new Cell[boardSizeX, boardSizeY];
-
-        CreateBoard();
-    }
-
-    private void CreateBoard()
-    {
-        Vector3 origin = new Vector3(-boardSizeX * 0.5f + 0.5f, -boardSizeY * 0.5f + 0.5f, 0f);
+		float yOffset = 1.5f;
+		Vector3 origin = new Vector3(-boardSizeX * 0.5f + 0.5f, -boardSizeY * 0.5f + 0.5f + yOffset, 0f);
         GameObject prefabBG = Resources.Load<GameObject>(Constants.PREFAB_CELL_BACKGROUND);
         for (int x = 0; x < boardSizeX; x++)
         {
@@ -72,71 +74,70 @@ public class Board
 
     }
 
-    internal void Fill()
-    {
-        for (int x = 0; x < boardSizeX; x++)
-        {
-            for (int y = 0; y < boardSizeY; y++)
-            {
-                Cell cell = m_cells[x, y];
-                NormalItem item = new NormalItem();
+	internal void Fill()
+	{
+		int totalCells = boardSizeX * boardSizeY;
+		var allTypes = System.Enum.GetValues(typeof(NormalItem.eNormalType));
+		int typeCount = allTypes.Length;
 
-                List<NormalItem.eNormalType> types = new List<NormalItem.eNormalType>();
-                if (cell.NeighbourBottom != null)
-                {
-                    NormalItem nitem = cell.NeighbourBottom.Item as NormalItem;
-                    if (nitem != null)
-                    {
-                        types.Add(nitem.ItemType);
-                    }
-                }
+		
+		List<NormalItem.eNormalType> itemPool = new List<NormalItem.eNormalType>();
 
-                if (cell.NeighbourLeft != null)
-                {
-                    NormalItem nitem = cell.NeighbourLeft.Item as NormalItem;
-                    if (nitem != null)
-                    {
-                        types.Add(nitem.ItemType);
-                    }
-                }
+		
+		int baseCountPerType = (totalCells / (3 * typeCount)) * 3;
+		int remainder = totalCells - baseCountPerType * typeCount;
 
-                item.SetType(Utils.GetRandomNormalTypeExcept(types.ToArray()));
-                item.SetView();
-                item.SetViewRoot(m_root);
+		
+		foreach (NormalItem.eNormalType type in allTypes)
+		{
+			for (int i = 0; i < baseCountPerType; i++)
+				itemPool.Add(type);
+		}
 
-                cell.Assign(item);
-                cell.ApplyItemPosition(false);
-            }
-        }
-    }
+		
+		int index = 0;
+		while (remainder > 0)
+		{
+			int addCount = Mathf.Min(3, remainder);
+			var type = (NormalItem.eNormalType)allTypes.GetValue(index % typeCount);
+			for (int i = 0; i < addCount; i++)
+				itemPool.Add(type);
 
-    internal void Shuffle()
-    {
-        List<Item> list = new List<Item>();
-        for (int x = 0; x < boardSizeX; x++)
-        {
-            for (int y = 0; y < boardSizeY; y++)
-            {
-                list.Add(m_cells[x, y].Item);
-                m_cells[x, y].Free();
-            }
-        }
+			remainder -= addCount;
+			index++;
+		}
 
-        for (int x = 0; x < boardSizeX; x++)
-        {
-            for (int y = 0; y < boardSizeY; y++)
-            {
-                int rnd = UnityEngine.Random.Range(0, list.Count);
-                m_cells[x, y].Assign(list[rnd]);
-                m_cells[x, y].ApplyItemMoveToPosition();
+		for (int i = 0; i < itemPool.Count; i++)
+		{
+			int rand = UnityEngine.Random.Range(i, itemPool.Count);
+			var tmp = itemPool[i];
+			itemPool[i] = itemPool[rand];
+			itemPool[rand] = tmp;
+		}
 
-                list.RemoveAt(rnd);
-            }
-        }
-    }
+		
+		int itemIndex = 0;
+		for (int x = 0; x < boardSizeX; x++)
+		{
+			for (int y = 0; y < boardSizeY; y++)
+			{
+				NormalItem.eNormalType type = itemPool[itemIndex++];
 
+				NormalItem item = new NormalItem();
+				item.SetType(type);
+				item.SetView();
+				item.SetViewRoot(m_root);
 
-    internal void FillGapsWithNewItems()
+				Cell cell = m_cells[x, y];
+				cell.Assign(item);
+				item.View.position = cell.transform.position;
+			}
+		}
+
+		Debug.Log($"✅ Board generated: {itemPool.Count} items, all divisible by 3.");
+	}
+
+	internal void FillGapsWithNewItems()
     {
         for (int x = 0; x < boardSizeX; x++)
         {
@@ -187,7 +188,7 @@ public class Board
         List<Cell> list = new List<Cell>();
         list.Add(cell);
 
-        //check horizontal match
+        
         Cell newcell = cell;
         while (true)
         {
@@ -674,4 +675,16 @@ public class Board
             }
         }
     }
+	public bool IsAllEmpty()
+	{
+		for (int x = 0; x < boardSizeX; x++)
+		{
+			for (int y = 0; y < boardSizeY; y++)
+			{
+				if (!m_cells[x, y].IsEmpty)
+					return false;
+			}
+		}
+		return true;
+	}
 }

@@ -5,26 +5,39 @@ using UnityEngine;
 using DG.Tweening;
 
 [Serializable]
-public class Item
+public class Item 
 {
     public Cell Cell { get; private set; }
 
     public Transform View { get; private set; }
 
+	public virtual string Type { get; protected set; }
 
-    public virtual void SetView()
+
+	public virtual void SetView()
     {
-        string prefabname = GetPrefabName();
+		string prefabname = GetPrefabName();
 
-        if (!string.IsNullOrEmpty(prefabname))
-        {
-            GameObject prefab = Resources.Load<GameObject>(prefabname);
-            if (prefab)
-            {
-                View = GameObject.Instantiate(prefab).transform;
-            }
-        }
-    }
+		if (!string.IsNullOrEmpty(prefabname))
+		{
+			GameObject prefab = Resources.Load<GameObject>(prefabname);
+			if (prefab)
+			{
+			
+				View = GameObject.Instantiate(prefab).transform;
+
+				Type = prefab.name.Replace("(Clone)", "").Trim();
+			}
+			else
+			{
+				Type = "Unknown";
+			}
+		}
+		else
+		{
+			Type = "Unknown";
+		}
+	}
 
     protected virtual string GetPrefabName() { return string.Empty; }
 
@@ -117,8 +130,7 @@ public class Item
             View.DOPunchScale(View.localScale * 0.1f, 0.1f).SetLoops(-1);
         }
     }
-
-    internal void StopAnimateForHint()
+	internal void StopAnimateForHint()
     {
         if (View)
         {

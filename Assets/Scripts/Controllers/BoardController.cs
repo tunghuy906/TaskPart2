@@ -1,306 +1,194 @@
 ﻿using DG.Tweening;
 using System;
 using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 
 public class BoardController : MonoBehaviour
 {
-    public event Action OnMoveEvent = delegate { };
+	public event Action OnMoveEvent = delegate { };
+	public bool IsBusy { get; private set; }
+	private Board m_board;
+	private GameManager m_gameManager;
+	private Camera m_cam;
+	private GameSettings m_gameSettings;
+	private bool m_gameOver;
 
-    public bool IsBusy { get; private set; }
+	private Item lastMovedItem = null;
+	private Cell lastOriginCell = null;
+	private Vector3 lastOriginPos;
 
-    private Board m_board;
+	[Header("References")]
+	public BottomContainer bottomContainer;
 
-    private GameManager m_gameManager;
+	public void StartGame(GameManager gameManager, GameSettings gameSettings)
+	{
+		m_gameManager = gameManager;
+		m_gameSettings = gameSettings;
 
-    private bool m_isDragging;
+		m_cam = Camera.main;
+		m_board = new Board(this.transform, gameSettings);
+		m_board.Fill();
 
-    private Camera m_cam;
+		m_gameManager.StateChangedAction += OnGameStateChange;
+	}
 
-    private Collider2D m_hitCollider;
+	private void OnGameStateChange(GameManager.eStateGame state)
+	{
+		switch (state)
+		{
+			case GameManager.eStateGame.GAME_STARTED:
+				IsBusy = false;
+				break;
+			case GameManager.eStateGame.PAUSE:
+				IsBusy = true;
+				break;
+			case GameManager.eStateGame.GAME_OVER:
+				m_gameOver = true;
+				break;
+		}
+	}
 
-    private GameSettings m_gameSettings;
+	private void Update()
+	{
+		if (Input.GetMouseButtonDown(0))
+		{
+			var hit = Physics2D.Raycast(m_cam.ScreenToWorldPoint(Input.mousePosition), Vector2.zero);
+			if (hit.collider == null) return;
 
-    private List<Cell> m_potentialMatch;
+			Cell cell = hit.collider.GetComponent<Cell>();
+			if (cell != null && cell.Item != null)
+			{
+				HandleCellClick(cell);
+				return;
+			}
 
-    private float m_timeAfterFill;
+			Item clickedItem = hit.collider.GetComponentInParent<Cell>()?.Item;
+			if (clickedItem != null)
+			{
+				HandleContainerItemClick(clickedItem);
+				return;
+			}
+		}
+	}
 
-    private bool m_hintIsShown;
+	private void HandleCellClick(Cell cell)
+	{
+		if (cell == null || cell.Item == null || bottomContainer == null)
+			return;
 
-    private bool m_gameOver;
+		
+		if (lastMovedItem != null && bottomContainer.GetItems().Contains(lastMovedItem))
+		{
+			
+			var clickedObj = Physics2D.Raycast(m_cam.ScreenToWorldPoint(Input.mousePosition), Vector2.zero);
+			if (clickedObj.collider != null)
+			{
+				Item clickedItem = clickedObj.collider.GetComponent<Item>();
+				if (clickedItem != null && clickedItem == lastMovedItem)
+				{
 
-    public void StartGame(GameManager gameManager, GameSettings gameSettings)
-    {
-        m_gameManager = gameManager;
+					bottomContainer.RemoveItem(lastMovedItem);
 
-        m_gameSettings = gameSettings;
+					
+					lastMovedItem.View.SetParent(transform, true);
+					lastMovedItem.View.DOMove(lastOriginPos, 0.5f)
+						.SetEase(Ease.OutQuad)
+						.OnComplete(() =>
+						{
+							lastOriginCell.Assign(lastMovedItem);
 
-        m_gameManager.StateChangedAction += OnGameStateChange;
+							
+							lastMovedItem.View.DOScale(1.2f, 0.1f)
+								.SetLoops(2, LoopType.Yoyo)
+								.SetEase(Ease.InOutQuad);
 
-        m_cam = Camera.main;
+							
+							lastMovedItem = null;
+							lastOriginCell = null;
+						});
 
-        m_board = new Board(this.transform, gameSettings);
+					return;
+				}
+			}
+		}
 
-        Fill();
-    }
+		
+		OnMoveEvent?.Invoke();
+		Item item = cell.Item;
 
-    private void Fill()
-    {
-        m_board.Fill();
-        FindMatchesAndCollapse();
-    }
+		
+		lastMovedItem = item;
+		lastOriginCell = cell;
+		lastOriginPos = item.View.position;
 
-    private void OnGameStateChange(GameManager.eStateGame state)
-    {
-        switch (state)
-        {
-            case GameManager.eStateGame.GAME_STARTED:
-                IsBusy = false;
-                break;
-            case GameManager.eStateGame.PAUSE:
-                IsBusy = true;
-                break;
-            case GameManager.eStateGame.GAME_OVER:
-                m_gameOver = true;
-                StopHints();
-                break;
-        }
-    }
+		
+		cell.Free();
 
+		
+		if (bottomContainer.IsFull)
+		{
+			Debug.Log("⚠️ Container full, cannot add more items.");
+			return;
+		}
 
-    public void Update()
-    {
-        if (m_gameOver) return;
-        if (IsBusy) return;
+		
+		int slotIndex = bottomContainer.GetItems().Count;
+		if (slotIndex >= bottomContainer.slots.Count)
+			slotIndex = bottomContainer.slots.Count - 1;
 
-        if (!m_hintIsShown)
-        {
-            m_timeAfterFill += Time.deltaTime;
-            if (m_timeAfterFill > m_gameSettings.TimeForHint)
-            {
-                m_timeAfterFill = 0f;
-                ShowHint();
-            }
-        }
+		Transform targetSlot = bottomContainer.slots[slotIndex];
+		Vector3 targetPos = targetSlot.position;
 
-        if (Input.GetMouseButtonDown(0))
-        {
-            var hit = Physics2D.Raycast(m_cam.ScreenToWorldPoint(Input.mousePosition), Vector2.zero);
-            if (hit.collider != null)
-            {
-                m_isDragging = true;
-                m_hitCollider = hit.collider;
-            }
-        }
+		
+		item.View.SetParent(bottomContainer.transform, true);
+		item.View.DOMove(targetPos, 0.5f)
+			.SetEase(Ease.InOutQuad)
+			.OnComplete(() =>
+			{
+				bottomContainer.AddItem(item);
+				m_gameManager.CheckBottomMatch();
 
-        if (Input.GetMouseButtonUp(0))
-        {
-            ResetRayCast();
-        }
+				
+				if (IsBoardCleared())
+				{
+					m_gameManager.WinGame();
+				}
+			});
+	}
+	private void HandleContainerItemClick(Item clickedItem)
+	{
+		if (lastMovedItem == null || clickedItem != lastMovedItem)
+			return;
 
-        if (Input.GetMouseButton(0) && m_isDragging)
-        {
-            var hit = Physics2D.Raycast(m_cam.ScreenToWorldPoint(Input.mousePosition), Vector2.zero);
-            if (hit.collider != null)
-            {
-                if (m_hitCollider != null && m_hitCollider != hit.collider)
-                {
-                    StopHints();
+		
+		bottomContainer.RemoveItem(lastMovedItem);
 
-                    Cell c1 = m_hitCollider.GetComponent<Cell>();
-                    Cell c2 = hit.collider.GetComponent<Cell>();
-                    if (AreItemsNeighbor(c1, c2))
-                    {
-                        IsBusy = true;
-                        SetSortingLayer(c1, c2);
-                        m_board.Swap(c1, c2, () =>
-                        {
-                            FindMatchesAndCollapse(c1, c2);
-                        });
+		
+		lastMovedItem.View.SetParent(transform, true);
+		lastMovedItem.View.DOMove(lastOriginPos, 0.5f)
+			.SetEase(Ease.OutBack)
+			.OnComplete(() =>
+			{
+				lastOriginCell.Assign(lastMovedItem);
 
-                        ResetRayCast();
-                    }
-                }
-            }
-            else
-            {
-                ResetRayCast();
-            }
-        }
-    }
+				
+				lastMovedItem.View.DOScale(1.2f, 0.15f)
+					.SetLoops(2, LoopType.Yoyo)
+					.SetEase(Ease.InOutQuad);
 
-    private void ResetRayCast()
-    {
-        m_isDragging = false;
-        m_hitCollider = null;
-    }
+				lastMovedItem = null;
+				lastOriginCell = null;
+			});
+	}
 
-    private void FindMatchesAndCollapse(Cell cell1, Cell cell2)
-    {
-        if (cell1.Item is BonusItem)
-        {
-            cell1.ExplodeItem();
-            StartCoroutine(ShiftDownItemsCoroutine());
-        }
-        else if (cell2.Item is BonusItem)
-        {
-            cell2.ExplodeItem();
-            StartCoroutine(ShiftDownItemsCoroutine());
-        }
-        else
-        {
-            List<Cell> cells1 = GetMatches(cell1);
-            List<Cell> cells2 = GetMatches(cell2);
+	private bool IsBoardCleared()
+	{
+		return m_board != null && m_board.IsAllEmpty();
+	}
 
-            List<Cell> matches = new List<Cell>();
-            matches.AddRange(cells1);
-            matches.AddRange(cells2);
-            matches = matches.Distinct().ToList();
-
-            if (matches.Count < m_gameSettings.MatchesMin)
-            {
-                m_board.Swap(cell1, cell2, () =>
-                {
-                    IsBusy = false;
-                });
-            }
-            else
-            {
-                OnMoveEvent();
-
-                CollapseMatches(matches, cell2);
-            }
-        }
-    }
-
-    private void FindMatchesAndCollapse()
-    {
-        List<Cell> matches = m_board.FindFirstMatch();
-
-        if (matches.Count > 0)
-        {
-            CollapseMatches(matches, null);
-        }
-        else
-        {
-            m_potentialMatch = m_board.GetPotentialMatches();
-            if (m_potentialMatch.Count > 0)
-            {
-                IsBusy = false;
-
-                m_timeAfterFill = 0f;
-            }
-            else
-            {
-                //StartCoroutine(RefillBoardCoroutine());
-                StartCoroutine(ShuffleBoardCoroutine());
-            }
-        }
-    }
-
-    private List<Cell> GetMatches(Cell cell)
-    {
-        List<Cell> listHor = m_board.GetHorizontalMatches(cell);
-        if (listHor.Count < m_gameSettings.MatchesMin)
-        {
-            listHor.Clear();
-        }
-
-        List<Cell> listVert = m_board.GetVerticalMatches(cell);
-        if (listVert.Count < m_gameSettings.MatchesMin)
-        {
-            listVert.Clear();
-        }
-
-        return listHor.Concat(listVert).Distinct().ToList();
-    }
-
-    private void CollapseMatches(List<Cell> matches, Cell cellEnd)
-    {
-        for (int i = 0; i < matches.Count; i++)
-        {
-            matches[i].ExplodeItem();
-        }
-
-        if(matches.Count > m_gameSettings.MatchesMin)
-        {
-            m_board.ConvertNormalToBonus(matches, cellEnd);
-        }
-
-        StartCoroutine(ShiftDownItemsCoroutine());
-    }
-
-    private IEnumerator ShiftDownItemsCoroutine()
-    {
-        m_board.ShiftDownItems();
-
-        yield return new WaitForSeconds(0.2f);
-
-        m_board.FillGapsWithNewItems();
-
-        yield return new WaitForSeconds(0.2f);
-
-        FindMatchesAndCollapse();
-    }
-
-    private IEnumerator RefillBoardCoroutine()
-    {
-        m_board.ExplodeAllItems();
-
-        yield return new WaitForSeconds(0.2f);
-
-        m_board.Fill();
-
-        yield return new WaitForSeconds(0.2f);
-
-        FindMatchesAndCollapse();
-    }
-
-    private IEnumerator ShuffleBoardCoroutine()
-    {
-        m_board.Shuffle();
-
-        yield return new WaitForSeconds(0.3f);
-
-        FindMatchesAndCollapse();
-    }
-
-
-    private void SetSortingLayer(Cell cell1, Cell cell2)
-    {
-        if (cell1.Item != null) cell1.Item.SetSortingLayerHigher();
-        if (cell2.Item != null) cell2.Item.SetSortingLayerLower();
-    }
-
-    private bool AreItemsNeighbor(Cell cell1, Cell cell2)
-    {
-        return cell1.IsNeighbour(cell2);
-    }
-
-    internal void Clear()
-    {
-        m_board.Clear();
-    }
-
-    private void ShowHint()
-    {
-        m_hintIsShown = true;
-        foreach (var cell in m_potentialMatch)
-        {
-            cell.AnimateItemForHint();
-        }
-    }
-
-    private void StopHints()
-    {
-        m_hintIsShown = false;
-        foreach (var cell in m_potentialMatch)
-        {
-            cell.StopHintAnimation();
-        }
-
-        m_potentialMatch.Clear();
-    }
+	internal void Clear()
+	{
+		if (m_board != null)
+			m_board.Clear();
+	}
 }

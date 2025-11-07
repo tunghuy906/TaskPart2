@@ -2,13 +2,16 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public class GameManager : MonoBehaviour
 {
     public event Action<eStateGame> StateChangedAction = delegate { };
+	public static GameManager Instance;
+	[SerializeField] private BottomContainer bottomContainer;
 
-    public enum eLevelMode
+	public enum eLevelMode
     {
         TIMER,
         MOVES
@@ -47,23 +50,23 @@ public class GameManager : MonoBehaviour
 
     private void Awake()
     {
-        State = eStateGame.SETUP;
+		Instance = this;
+		State = eStateGame.SETUP;
 
-        m_gameSettings = Resources.Load<GameSettings>(Constants.GAME_SETTINGS_PATH);
+		m_gameSettings = Resources.Load<GameSettings>(Constants.GAME_SETTINGS_PATH);
+		m_uiMenu = FindObjectOfType<UIMainManager>();
+		m_uiMenu.Setup(this);
+	}
 
-        m_uiMenu = FindObjectOfType<UIMainManager>();
-        m_uiMenu.Setup(this);
-    }
-
-    void Start()
+	void Start()
     {
         State = eStateGame.MAIN_MENU;
     }
 
-    // Update is called once per frame
+  
     void Update()
     {
-        if (m_boardController != null) m_boardController.Update();
+        //if (m_boardController != null) m_boardController.Update();
     }
 
 
@@ -81,28 +84,23 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    public void LoadLevel(eLevelMode mode)
-    {
-        m_boardController = new GameObject("BoardController").AddComponent<BoardController>();
-        m_boardController.StartGame(this, m_gameSettings);
+	public void LoadLevel(eLevelMode mode)
+	{
+		
+		m_boardController = new GameObject("BoardController").AddComponent<BoardController>();
+		m_boardController.StartGame(this, m_gameSettings);
+		m_boardController.bottomContainer = bottomContainer;
 
-        if (mode == eLevelMode.MOVES)
-        {
-            m_levelCondition = this.gameObject.AddComponent<LevelMoves>();
-            m_levelCondition.Setup(m_gameSettings.LevelMoves, m_uiMenu.GetLevelConditionView(), m_boardController);
-        }
-        else if (mode == eLevelMode.TIMER)
-        {
-            m_levelCondition = this.gameObject.AddComponent<LevelTime>();
-            m_levelCondition.Setup(m_gameSettings.LevelMoves, m_uiMenu.GetLevelConditionView(), this);
-        }
+		m_levelCondition = this.gameObject.AddComponent<LevelTime>();
+		m_levelCondition.Setup(m_gameSettings.LevelTime, m_uiMenu.GetLevelConditionView(), this);
 
-        m_levelCondition.ConditionCompleteEvent += GameOver;
+		
+		m_levelCondition.ConditionCompleteEvent += GameOver;
 
-        State = eStateGame.GAME_STARTED;
-    }
+		State = eStateGame.GAME_STARTED;
+	}
 
-    public void GameOver()
+	public void GameOver()
     {
         StartCoroutine(WaitBoardController());
     }
@@ -136,4 +134,96 @@ public class GameManager : MonoBehaviour
             m_levelCondition = null;
         }
     }
+	public void CheckBottomMatch()
+	{
+		var allItems = bottomContainer.GetItems();
+
+		
+		if (allItems == null || allItems.Count < 3)
+			return;
+
+		
+		var grouped = allItems
+			.Where(i => !string.IsNullOrEmpty(i.Type))
+			.GroupBy(i => i.Type)
+			.ToList();
+
+		
+		var groupToClear = grouped.FirstOrDefault(g => g.Count() >= 3);
+
+		if (groupToClear != null)
+		{
+			
+			Debug.Log($"🧩 Match found: {groupToClear.Key} x{groupToClear.Count()}");
+			bottomContainer.ClearTriple(groupToClear.Key);
+		}
+		else
+		{
+			if (bottomContainer.IsFull)
+			{
+				Debug.Log("❌ Container full — Lose!");
+				LoseGame();
+			}
+		}
+	}
+
+
+	public void WinGame()
+	{
+		Debug.Log("You Win!");
+		StartCoroutine(WinRoutine());
+	}
+
+	public void LoseGame()
+	{
+		Debug.Log("You Lose!");
+		StartCoroutine(LoseRoutine());
+	}
+
+	private IEnumerator WinRoutine()
+	{
+		yield return new WaitForSeconds(0.5f);
+		LevelManager.Instance.NextLevel(); 
+	}
+	private IEnumerator LoseRoutine()
+	{
+		yield return new WaitForSeconds(0.5f);
+		LevelManager.Instance.RestartLevel();
+	}
+	public void HandleCellClick(Cell cell)
+	{
+		if (cell == null || cell.Item == null)
+			return;
+
+		
+		if (bottomContainer.IsFull)
+		{
+			Debug.Log("⚠️ Container full, cannot add more!");
+			return;
+		}
+
+		
+		Item item = cell.Item;
+		cell.Free(); 
+
+		
+		Vector3 startPos = item.View.position;
+
+	
+		int slotIndex = bottomContainer.GetItems().Count;
+		if (slotIndex >= bottomContainer.slots.Count)
+			slotIndex = bottomContainer.slots.Count - 1;
+
+		Transform targetSlot = bottomContainer.slots[slotIndex];
+
+		
+		item.View.DOMove(targetSlot.position, 0.4f)
+			.SetEase(Ease.InOutQuad)
+			.OnComplete(() =>
+			{
+				
+				bottomContainer.AddItem(item);
+				CheckBottomMatch();
+			});
+	}
 }
